@@ -265,8 +265,11 @@ const KEY_DONE       = "marathon-done-v10";
 const KEY_ANALYSIS   = "marathon-analysis-v10";
 const KEY_OVERRIDES  = "marathon-overrides-v1";
 const KEY_SEEN_VER   = "marathon-seen-version";
-const APP_VERSION    = "v20";
+const APP_VERSION    = "v21";
 const CHANGELOG = [
+  { v:"v21", items:[
+    "🩹 Correctif d'affichage mobile : le haut des fenêtres (saisie de stats, modification de séance) était inaccessible quand le contenu dépassait la hauteur de l'écran",
+  ]},
   { v:"v20", items:[
     "🎯 Objectif ajusté à 4:35:00 (6:31/km) — toutes les allures du plan recalculées",
     "🚀 Nouvelle architecture : l'app se met à jour toute seule, plus besoin de réinstaller ni de vider le cache",
@@ -449,8 +452,8 @@ function EditSessionModal({ session, sessionKey, hasOverride, onClose, onSave, o
   };
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:350,display:"flex",alignItems:"flex-end",justifyContent:"center",overflowY:"auto"}}>
-      <div style={{background:"#0f172a",borderRadius:"20px 20px 0 0",border:`1px solid ${dot}44`,width:"100%",maxWidth:520,padding:"20px 18px 40px"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:350,display:"flex",alignItems:"flex-end",justifyContent:"center",overflowY:"hidden"}}>
+      <div style={{background:"#0f172a",borderRadius:"20px 20px 0 0",border:`1px solid ${dot}44`,width:"100%",maxWidth:520,padding:"20px 18px 40px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 0px))",maxHeight:"90vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
         <div style={{width:40,height:4,background:"#334155",borderRadius:2,margin:"0 auto 20px"}} />
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div style={{fontSize:17,fontWeight:700,color:"#f1f5f9"}}>✏️ Modifier la séance</div>
@@ -515,8 +518,8 @@ function EditWeekModal({ week, hasOverride, onClose, onSave, onReset }) {
   };
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:350,display:"flex",alignItems:"flex-end",justifyContent:"center",overflowY:"auto"}}>
-      <div style={{background:"#0f172a",borderRadius:"20px 20px 0 0",border:`1px solid ${pc}44`,width:"100%",maxWidth:520,padding:"20px 18px 40px"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:350,display:"flex",alignItems:"flex-end",justifyContent:"center",overflowY:"hidden"}}>
+      <div style={{background:"#0f172a",borderRadius:"20px 20px 0 0",border:`1px solid ${pc}44`,width:"100%",maxWidth:520,padding:"20px 18px 40px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 0px))",maxHeight:"90vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
         <div style={{width:40,height:4,background:"#334155",borderRadius:2,margin:"0 auto 20px"}} />
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div style={{fontSize:17,fontWeight:700,color:"#f1f5f9"}}>✏️ Modifier la semaine {week.week}</div>
@@ -604,8 +607,8 @@ function StatsModal({ session, sessionKey, onClose, onSaved }) {
   };
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center",overflowY:"auto"}}>
-      <div style={{background:"#0f172a",borderRadius:"20px 20px 0 0",border:`1px solid ${dot}44`,width:"100%",maxWidth:520,padding:"20px 18px 40px"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center",overflowY:"hidden"}}>
+      <div style={{background:"#0f172a",borderRadius:"20px 20px 0 0",border:`1px solid ${dot}44`,width:"100%",maxWidth:520,padding:"20px 18px 40px",paddingBottom:"calc(40px + env(safe-area-inset-bottom, 0px))",maxHeight:"90vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
         <div style={{width:40,height:4,background:"#334155",borderRadius:2,margin:"0 auto 20px"}} />
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div style={{flex:1}}>
