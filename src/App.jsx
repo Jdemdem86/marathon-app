@@ -55,6 +55,85 @@ function parsePaceToMin(pace) {
   return parts[0] + (parts[1]||0)/60;
 }
 
+// ── DÉCOUPAGE DE SÉANCE (tours de la montre) ────────────────────────────────
+// Une séance à allure spécifique enchaîne échauffement, corps de séance et
+// retour au calme. La moyenne globale mélange les trois et ne dit rien sur la
+// qualité du bloc travaillé : on isole donc le corps de séance.
+function paceToSec(pace) {
+  if(!pace) return null;
+  const p = String(pace).split(":").map(Number);
+  if(p.length < 2 || isNaN(p[0]) || isNaN(p[1])) return null;
+  return p[0]*60 + p[1];
+}
+function formatSecPace(secPerKm) {
+  if(!secPerKm || !isFinite(secPerKm) || secPerKm <= 0) return "";
+  return `${Math.floor(secPerKm/60)}:${String(Math.round(secPerKm%60)).padStart(2,"0")}`;
+}
+// Moyenne pondérée par la durée : un tour de 20 min pèse plus qu'un tour de 2 min
+function weightedAvg(laps, field) {
+  const valid = laps.filter(l => l[field] && Number(l.durationSec) > 0);
+  if(!valid.length) return null;
+  const totalTime = valid.reduce((a,l)=>a+Number(l.durationSec),0);
+  if(totalTime <= 0) return null;
+  return Math.round(valid.reduce((a,l)=>a+Number(l[field])*Number(l.durationSec),0) / totalTime);
+}
+function computeBlockStats(laps, selectedIdx) {
+  const sel = (laps||[]).filter(l => selectedIdx.includes(l.index));
+  if(!sel.length) return null;
+  const distance = sel.reduce((a,l)=>a+Number(l.distance||0),0);
+  const durationSec = sel.reduce((a,l)=>a+Number(l.durationSec||0),0);
+  if(distance <= 0 || durationSec <= 0) return null;
+  const hrMaxVals = sel.map(l=>Number(l.hrMax)).filter(v=>v>0);
+  const hrMoy = weightedAvg(sel, "hrMoy");
+  const cadence = weightedAvg(sel, "cadence");
+  return {
+    distance: distance.toFixed(2),
+    durationMin: Math.round(durationSec/60),
+    pace: formatSecPace(durationSec/distance),
+    hrMoy: hrMoy != null ? String(hrMoy) : "",
+    hrMax: hrMaxVals.length ? String(Math.max(...hrMaxVals)) : "",
+    cadence: cadence != null ? String(cadence) : "",
+  };
+}
+// Devine quels tours forment le corps de séance (modifiable ensuite d'un tap)
+function guessMainBlock(laps, session) {
+  if(!laps || laps.length === 0) return [];
+  if(laps.length === 1) return [laps[0].index];
+  const t = session?.target || {};
+  const targetSec = paceToSec(t.pace);
+
+  // Cas 1 — le plan précise une distance de bloc (ex. « 9 km à 6:31 ») :
+  // on cherche la suite de tours consécutifs dont le total s'en approche le plus.
+  if(t.mpKm) {
+    let best = null;
+    for(let i=0;i<laps.length;i++){
+      let dist = 0, time = 0;
+      for(let j=i;j<laps.length;j++){
+        dist += Number(laps[j].distance||0);
+        time += Number(laps[j].durationSec||0);
+        if(dist <= 0) continue;
+        const distDiff = Math.abs(dist - t.mpKm);
+        const paceDiff = targetSec ? Math.abs((time/dist) - targetSec) : 0;
+        const score = distDiff*100 + paceDiff; // la distance prime, l'allure départage
+        if(!best || score < best.score) {
+          best = { score, idx: laps.slice(i, j+1).map(l=>l.index) };
+        }
+      }
+    }
+    return best ? best.idx : [];
+  }
+
+  // Cas 2 — séance de qualité sans distance précisée (tempo, fractionné) :
+  // on retient les tours courus près de l'allure cible.
+  if(session?.type === "quality" && targetSec) {
+    const near = laps.filter(l => Math.abs(Number(l.paceSecPerKm) - targetSec) <= 40);
+    if(near.length) return near.map(l=>l.index);
+  }
+
+  // Cas 3 — footing ou sortie longue : toute la séance fait foi.
+  return laps.map(l=>l.index);
+}
+
 function sessionDurationMin(session) {
   if(session.target.duration) return session.target.duration;
   if(session.target.distance) return session.target.distance * parsePaceToMin(session.target.pace);
@@ -265,8 +344,13 @@ const KEY_DONE       = "marathon-done-v10";
 const KEY_ANALYSIS   = "marathon-analysis-v10";
 const KEY_OVERRIDES  = "marathon-overrides-v1";
 const KEY_SEEN_VER   = "marathon-seen-version";
-const APP_VERSION    = "v21";
+const APP_VERSION    = "v22";
 const CHANGELOG = [
+  { v:"v22", items:[
+    "⏱️ Découpage des séances par tours : l'échauffement et le retour au calme ne faussent plus l'allure analysée",
+    "🎯 Le corps de séance est détecté automatiquement, et ajustable d'un tap si besoin",
+    "🤖 L'analyse compare désormais l'allure du corps de séance à la cible, pas la moyenne globale",
+  ]},
   { v:"v21", items:[
     "🩹 Correctif d'affichage mobile : le haut des fenêtres (saisie de stats, modification de séance) était inaccessible quand le contenu dépassait la hauteur de l'écran",
   ]},
@@ -322,8 +406,33 @@ function getEffectiveWeek(base, overrides) {
   return { ...base, ...o };
 }
 
-async function analyzeStats(stats, session) {
+async function analyzeStats(stats, session, blockInfo) {
   const t = session.target;
+  const laps = blockInfo?.laps || [];
+  const block = blockInfo?.blockStats || null;
+  const selected = blockInfo?.selectedLaps || [];
+
+  // Découpage de la séance, s'il existe : sans lui, l'échauffement et le retour
+  // au calme faussent la moyenne et rendent la comparaison à la cible trompeuse.
+  const lapsText = laps.length > 1
+    ? `\nDÉCOUPAGE DE LA SÉANCE (tours de la montre) :\n` + laps.map(l => {
+        const isBlock = selected.includes(l.index);
+        return `- ${l.name} : ${l.distance} km en ${l.duration} min à ${l.pace}/km` +
+               `${l.hrMoy ? ` — FC moy ${l.hrMoy}` : ""}${l.hrMax ? `, FC max ${l.hrMax}` : ""}` +
+               `${isBlock ? "   ← CORPS DE SÉANCE" : ""}`;
+      }).join("\n") + "\n"
+    : "";
+
+  const blockText = block
+    ? `\nCORPS DE SÉANCE ISOLÉ (c'est CETTE allure qu'il faut comparer à la cible) :
+- Allure : ${block.pace}/km
+- Distance : ${block.distance} km
+- Durée : ${block.durationMin} min
+${block.hrMoy ? `- FC moyenne : ${block.hrMoy} bpm` : ""}
+${block.hrMax ? `- FC maximale : ${block.hrMax} bpm` : ""}
+${block.cadence ? `- Cadence : ${block.cadence} ppm` : ""}
+`
+    : "";
   const prompt = `Tu es coach de course à pied expert. Voici les stats Garmin d'une séance.
 
 SÉANCE PRÉVUE : ${session.label} — ${session.detail}
@@ -344,12 +453,16 @@ STATS RÉELLES GARMIN :
 - Hydratation prise : ${stats.hydration || "—"}
 - Ressenti (1-10) : ${stats.feeling || "—"}
 ${stats.notes ? `- Notes : ${stats.notes}` : ""}
+${lapsText}${blockText}
+${block ? `IMPORTANT : la moyenne globale ci-dessus inclut l'échauffement et le retour au calme.
+Base ton jugement sur l'allure du CORPS DE SÉANCE, pas sur la moyenne globale.
+Commente aussi la régularité entre les tours du corps de séance s'il y en a plusieurs.` : ""}
 
 Réponds en 5 blocs courts :
 ✅ POINTS POSITIFS
 ⚠️ POINTS D'ATTENTION
 💧 HYDRATATION (était-elle adaptée à la météo/effort ? sinon quoi corriger)
-📊 SYNTHÈSE — commence OBLIGATOIREMENT par une ligne "Allure : [réelle] vs [cible]/km (écart de Xs)", puis les autres écarts (FC, distance/durée)
+📊 SYNTHÈSE — commence OBLIGATOIREMENT par une ligne "Allure : [réelle] vs [cible]/km (écart de Xs)" en utilisant l'allure du corps de séance si elle est fournie, puis les autres écarts (FC, distance/durée)
 🎯 CONSEIL POUR LA PROCHAINE SÉANCE
 
 Sois direct, coach, concis.`;
@@ -562,9 +675,15 @@ function StatsModal({ session, sessionKey, onClose, onSaved }) {
   const [stravaError,   setStravaError]   = useState(null);
   const [stravaInfo,    setStravaInfo]    = useState(null); // {name, date} de la dernière activité récupérée
   const [stravaNeedsAuth, setStravaNeedsAuth] = useState(false);
+  const [laps,         setLaps]         = useState([]);   // découpage renvoyé par Strava
+  const [selectedLaps, setSelectedLaps] = useState([]);   // index des tours du corps de séance
   const set = (k,v) => setStats(prev=>({...prev,[k]:v}));
   const dot = TYPE_STYLE[session.type].dot;
   const canAnalyze = stats.pace || stats.hrMoy || stats.distance || stats.duration;
+  const blockStats = useMemo(()=>computeBlockStats(laps, selectedLaps), [laps, selectedLaps]);
+  const toggleLap = idx => setSelectedLaps(prev =>
+    prev.includes(idx) ? prev.filter(i=>i!==idx) : [...prev, idx].sort((a,b)=>a-b)
+  );
 
   const fetchStrava = async () => {
     setStravaLoading(true); setStravaError(null); setStravaNeedsAuth(false);
@@ -580,6 +699,9 @@ function StatsModal({ session, sessionKey, onClose, onSaved }) {
         cadence:  activity.cadence  || prev.cadence,
         temp:     activity.temp     || prev.temp,
       }));
+      const lapList = Array.isArray(activity.laps) ? activity.laps : [];
+      setLaps(lapList);
+      setSelectedLaps(guessMainBlock(lapList, session));
       setStravaInfo({ name: activity.name, date: activity.date });
     } catch (err) {
       if (err?.needsAuth) {
@@ -593,12 +715,12 @@ function StatsModal({ session, sessionKey, onClose, onSaved }) {
 
   const analyze = async () => {
     setLoading(true); setError(null);
-    try { setResult(await analyzeStats(stats, session)); }
+    try { setResult(await analyzeStats(stats, session, { laps, blockStats, selectedLaps })); }
     catch { setError("Erreur réseau. Réessaie."); }
     setLoading(false);
   };
   const save = async () => {
-    const entry = { analysis:result, stats, date:new Date().toLocaleDateString("fr-FR"), label:session.label };
+    const entry = { analysis:result, stats, blockStats, laps, date:new Date().toLocaleDateString("fr-FR"), label:session.label };
     const all = await loadStore(KEY_ANALYSIS);
     all[sessionKey] = entry;
     await saveStore(KEY_ANALYSIS, all);
@@ -640,6 +762,40 @@ function StatsModal({ session, sessionKey, onClose, onSaved }) {
             )}
             {stravaError && (
               <div style={{marginBottom:14,padding:"10px 12px",background:"#200a0a",border:"1px solid #f8717144",borderRadius:10,fontSize:12,color:"#f87171",lineHeight:1.6}}>{stravaError}</div>
+            )}
+
+            {/* Découpage de la séance en tours */}
+            {laps.length > 1 && (
+              <div style={{marginBottom:16,padding:"12px 14px",background:"#0f172a",border:"1px solid #334155",borderRadius:12}}>
+                <div style={{fontSize:12,color:"#94a3b8",fontWeight:700,marginBottom:4}}>⏱️ Découpage de la séance</div>
+                <div style={{fontSize:11,color:"#475569",lineHeight:1.6,marginBottom:10}}>
+                  Tape sur les tours qui forment le corps de séance — l'échauffement et le retour au calme seront exclus du calcul d'allure.
+                </div>
+                {laps.map(l=>{
+                  const on = selectedLaps.includes(l.index);
+                  return (
+                    <button key={l.index} onClick={()=>toggleLap(l.index)} style={{width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:10,padding:"9px 10px",marginBottom:5,borderRadius:9,background:on?dot+"1e":"#1e293b",border:`1.5px solid ${on?dot+"88":"#334155"}`,cursor:"pointer"}}>
+                      <span style={{width:18,height:18,borderRadius:5,flexShrink:0,background:on?dot:"transparent",border:`1.5px solid ${on?dot:"#475569"}`,display:"flex",alignItems:"center",justifyContent:"center",color:"#080810",fontSize:11,fontWeight:800}}>{on?"✓":""}</span>
+                      <span style={{flex:1,minWidth:0}}>
+                        <span style={{fontSize:13,fontWeight:700,color:on?"#f1f5f9":"#94a3b8"}}>{l.pace}/km</span>
+                        <span style={{fontSize:11,color:"#64748b"}}> · {l.distance} km · {l.duration} min</span>
+                        {l.hrMoy && <span style={{fontSize:11,color:"#64748b"}}> · {l.hrMoy} bpm</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+                {blockStats ? (
+                  <div style={{marginTop:8,padding:"10px 12px",background:dot+"14",border:`1px solid ${dot}55`,borderRadius:9}}>
+                    <div style={{fontSize:11,color:dot,fontWeight:700,marginBottom:3}}>CORPS DE SÉANCE RETENU</div>
+                    <div style={{fontSize:13,color:"#f1f5f9",fontWeight:700}}>
+                      {blockStats.pace}/km <span style={{fontSize:11,color:"#94a3b8",fontWeight:400}}>sur {blockStats.distance} km ({blockStats.durationMin} min){blockStats.hrMoy?` · ${blockStats.hrMoy} bpm`:""}</span>
+                    </div>
+                    <div style={{fontSize:11,color:"#475569",marginTop:4}}>C'est cette allure qui sera comparée à ta cible de {session.target?.pace || "—"}/km.</div>
+                  </div>
+                ) : (
+                  <div style={{marginTop:8,fontSize:11,color:"#fb923c",lineHeight:1.6}}>Aucun tour sélectionné — l'analyse portera sur la moyenne globale.</div>
+                )}
+              </div>
             )}
 
             {/* Allure — champ mis en avant, toujours visible en premier */}
