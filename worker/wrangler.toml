@@ -1,1 +1,17 @@
+name = "marathon-api"
+main = "index.js"
+compatibility_date = "2024-11-01"
 
+# Stockage du jeton Strava
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "ee30c3ed3a6d4ffe9c3c845da66b7da0"
+
+[vars]
+# Adresse de l'app (le service n'accepte que les appels venant de là)
+APP_ORIGIN = "https://jdemdem86.github.io/marathon-app/"
+
+# ⚠️ Les secrets ne sont PAS dans ce fichier : ils sont stockés côté Cloudflare
+# et conservés à chaque déploiement.
+#   ANTHROPIC_API_KEY, STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
+# Pour les modifier : Cloudflare → Workers → marathon-api → Settings → Variables
